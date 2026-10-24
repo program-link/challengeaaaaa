@@ -190,13 +190,19 @@
 <body class="w-screen h-screen relative">
 
     <header class="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
-        <div class="bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-md border border-slate-200 pointer-events-auto flex items-center space-x-2.5">
-            <div id="connection-indicator" class="w-3 h-3 rounded-full bg-amber-500 relative flex items-center justify-center shrink-0">
-                <div id="connection-ping" class="absolute w-full h-full rounded-full bg-emerald-400 animate-shockwave hidden"></div>
-            </div>
-            <div>
-                <h1 class="font-bold text-slate-800 text-xs sm:text-sm leading-tight">挑戦ボード</h1>
-                <span id="header-subtitle" class="text-[10px] text-slate-400 leading-tight"></span>
+        <div class="flex items-center space-x-2 pointer-events-auto">
+            <!-- 検索ボタン -->
+            <button onclick="toggleSearchModal()" class="w-10 h-10 bg-white/95 backdrop-blur-md rounded-2xl shadow-md border border-slate-200 flex items-center justify-center text-slate-700 hover:bg-slate-100 active:scale-95 transition interactive-btn" title="検索">
+                <i class="fa-solid fa-magnifying-glass text-sm"></i>
+            </button>
+            <div class="bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-md border border-slate-200 flex items-center space-x-2.5">
+                <div id="connection-indicator" class="w-3 h-3 rounded-full bg-amber-500 relative flex items-center justify-center shrink-0">
+                    <div id="connection-ping" class="absolute w-full h-full rounded-full bg-emerald-400 animate-shockwave hidden"></div>
+                </div>
+                <div>
+                    <h1 class="font-bold text-slate-800 text-xs sm:text-sm leading-tight">挑戦ボード</h1>
+                    <span id="header-subtitle" class="text-[10px] text-slate-400 leading-tight"></span>
+                </div>
             </div>
         </div>
 
@@ -228,6 +234,29 @@
         </button>
     </div>
 
+    <!-- Search Modal -->
+    <div id="search-modal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-lg overflow-hidden transform scale-95 transition-transform duration-200 flex flex-col max-h-[85vh]">
+            <div class="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                    <i class="fa-solid fa-magnifying-glass text-indigo-600"></i>
+                    <h3 class="font-bold text-slate-800 text-base">投稿を検索</h3>
+                </div>
+                <button type="button" onclick="toggleSearchModal()" class="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center interactive-btn">
+                    <i class="fa-solid fa-xmark text-base"></i>
+                </button>
+            </div>
+            
+            <div class="p-4 border-b border-slate-100 bg-white">
+                <input type="text" id="search-keyword-input" oninput="handleSearchInput()" placeholder="キーワードを入力（スペースで複数検索）" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+            </div>
+
+            <div id="search-results-container" class="p-4 overflow-y-auto space-y-3 flex-1 bg-slate-50">
+                <p class="text-center text-xs text-slate-400 py-6">キーワードを入力すると結果がここに並びます</p>
+            </div>
+        </div>
+    </div>
+
     <!-- Note Modal (Create & Edit) -->
     <div id="note-modal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
         <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-md overflow-hidden transform scale-95 transition-transform duration-200">
@@ -240,6 +269,7 @@
             
             <form id="note-form" onsubmit="handleFormSubmit(event)" class="p-5 space-y-4">
                 <input type="hidden" id="note-id-input">
+                <input type="hidden" id="note-old-author-input">
                 <div>
                     <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">タイトル</label>
                     <input type="text" id="note-title-input" placeholder="任意（空欄なら名前から自動作成）" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
@@ -251,8 +281,21 @@
                 </div>
 
                 <div>
-                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">学年-組 名前</label>
-                    <input type="text" id="note-author-input" placeholder="任意" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">名前 (または 匿名)</label>
+                    <input type="text" id="note-author-name-input" placeholder="例：山田 太郎（空欄なら匿名）" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm mb-3">
+
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">学年・組</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <select id="note-grade-select" onchange="updateClassOptions()" class="px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                            <option value="">学年を選択</option>
+                            <option value="1">1年生</option>
+                            <option value="2">2年生</option>
+                            <option value="3">3年生</option>
+                        </select>
+                        <select id="note-class-select" class="px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                            <option value="">組を選択</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div>
@@ -297,6 +340,50 @@
         let noteStartX = 0, noteStartY = 0;
         let dragStartPointerX = 0, dragStartPointerY = 0;
 
+        function updateClassOptions() {
+            const gradeSelect = document.getElementById('note-grade-select');
+            const classSelect = document.getElementById('note-class-select');
+            const selectedGrade = gradeSelect.value;
+            
+            const currentVal = classSelect.value;
+            classSelect.innerHTML = '<option value="">組を選択しない</option>';
+            
+            if (!selectedGrade) return;
+
+            const maxClass = (selectedGrade === '1') ? 5 : 4;
+            for (let i = 1; i <= maxClass; i++) {
+                const opt = document.createElement('option');
+                opt.value = i + '組';
+                opt.text = i + '組';
+                if (opt.value === currentVal) opt.selected = true;
+                classSelect.appendChild(opt);
+            }
+        }
+
+        function parseAuthorString(authorStr) {
+            if (!authorStr) return { name: '', grade: '', cls: '' };
+            let match = authorStr.match(/^（(\d+)年(\d+)組）\s*(.*)$/);
+            if (match) {
+                return { grade: match[1], cls: match[2] + '組', name: match[3] };
+            }
+            match = authorStr.match(/^(\d+)年(\d+)組\s*(.*)$/);
+            if (match) {
+                return { grade: match[1], cls: match[2] + '組', name: match[3] };
+            }
+            return { name: authorStr, grade: '', cls: '' };
+        }
+
+        function buildAuthorString(grade, cls, name) {
+            const trimmedName = name ? name.trim() : '';
+            const finalName = trimmedName === '' ? '匿名' : trimmedName;
+            if (grade && cls) {
+                return `（${grade}年${cls}） ${finalName}`;
+            } else if (grade) {
+                return `（${grade}年） ${finalName}`;
+            }
+            return finalName;
+        }
+
         function initCanvas() {
             const viewport = document.getElementById('viewport');
             panX = viewport.clientWidth / 2 - 2500;
@@ -304,7 +391,7 @@
             updateTransform();
 
             viewport.addEventListener('pointerdown', (e) => {
-                if (e.target.closest('.sticky-note') || e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea')) return;
+                if (e.target.closest('.sticky-note') || e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea') || e.target.closest('select')) return;
                 pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
             });
 
@@ -523,10 +610,13 @@
 
         function openCreateModal() {
             document.getElementById('note-id-input').value = '';
+            document.getElementById('note-old-author-input').value = '';
             document.getElementById('modal-title-text').innerText = '新しい挑戦を書き込む';
             document.getElementById('note-title-input').value = '';
             document.getElementById('note-content-input').value = '';
-            document.getElementById('note-author-input').value = '';
+            document.getElementById('note-author-name-input').value = '';
+            document.getElementById('note-grade-select').value = '';
+            updateClassOptions();
             document.querySelector('input[name="note-color"][value="yellow"]').checked = true;
             
             showModal('note-modal');
@@ -537,10 +627,16 @@
             if (!note || (note.creatorId !== window.myCreatorId && !window.isAdminMode)) return;
 
             document.getElementById('note-id-input').value = note.id;
+            document.getElementById('note-old-author-input').value = note.author || '';
             document.getElementById('modal-title-text').innerText = '挑戦を編集する';
             document.getElementById('note-title-input').value = note.title || '';
             document.getElementById('note-content-input').value = note.content || '';
-            document.getElementById('note-author-input').value = note.author || '';
+
+            const parsed = parseAuthorString(note.author);
+            document.getElementById('note-author-name-input').value = parsed.name;
+            document.getElementById('note-grade-select').value = parsed.grade;
+            updateClassOptions();
+            document.getElementById('note-class-select').value = parsed.cls;
             
             const colorRadio = document.querySelector(`input[name="note-color"][value="${note.color || 'yellow'}"]`);
             if (colorRadio) colorRadio.checked = true;
@@ -577,40 +673,125 @@
             }, 200);
         }
 
+        function toggleSearchModal() {
+            const modal = document.getElementById('search-modal');
+            if (modal.classList.contains('hidden')) {
+                modal.classList.remove('hidden');
+                setTimeout(() => {
+                    modal.classList.remove('opacity-0');
+                    const content = modal.querySelector('div > div');
+                    if (content) content.classList.remove('scale-95');
+                }, 10);
+                document.getElementById('search-keyword-input').value = '';
+                handleSearchInput();
+            } else {
+                modal.classList.add('opacity-0');
+                const content = modal.querySelector('div > div');
+                if (content) content.classList.add('scale-95');
+                setTimeout(() => {
+                    modal.classList.add('hidden');
+                }, 200);
+            }
+        }
+
+        function handleSearchInput() {
+            const rawQuery = document.getElementById('search-keyword-input').value.trim();
+            const container = document.getElementById('search-results-container');
+            container.innerHTML = '';
+
+            const keywords = rawQuery.toLowerCase().split(/\s+/).filter(k => k.length > 0);
+
+            const matchedNotes = window.notesData.filter(note => {
+                if (keywords.length === 0) return true;
+                const title = (note.title || '').toLowerCase();
+                const content = (note.content || '').toLowerCase();
+                const author = (note.author || '').toLowerCase();
+                
+                return keywords.every(kw => title.includes(kw) || content.includes(kw) || author.includes(kw));
+            });
+
+            matchedNotes.sort((a, b) => {
+                if (keywords.length === 0) return 0;
+                const aTitle = (a.title || '').toLowerCase();
+                const bTitle = (b.title || '').toLowerCase();
+                const aMatch = keywords.some(kw => aTitle.includes(kw));
+                const bMatch = keywords.some(kw => bTitle.includes(kw));
+                return (bMatch ? 1 : 0) - (aMatch ? 1 : 0);
+            });
+
+            if (matchedNotes.length === 0) {
+                container.innerHTML = '<p class="text-center text-xs text-slate-400 py-6">該当する投稿が見つかりませんでした</p>';
+                return;
+            }
+
+            matchedNotes.forEach(note => {
+                const colors = colorMap[note.color] || colorMap.yellow;
+                const item = document.createElement('div');
+                item.className = `p-3.5 rounded-2xl border ${colors.border} ${colors.bg} shadow-sm flex flex-col space-y-1.5 cursor-pointer hover:opacity-90 transition`;
+                item.onclick = () => {
+                    jumpToNote(note.x, note.y);
+                    toggleSearchModal();
+                };
+
+                item.innerHTML = `
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-xs ${colors.text} truncate">${escapeHtml(note.title)}</span>
+                        <span class="text-[10px] text-slate-500 font-medium"><i class="fa-solid fa-user-pen mr-1"></i>${escapeHtml(note.author || '匿名')}</span>
+                    </div>
+                    <p class="text-xs text-slate-700 line-clamp-2">${escapeHtml(note.content)}</p>
+                `;
+                container.appendChild(item);
+            });
+        }
+
+        function jumpToNote(targetX, targetY) {
+            const viewport = document.getElementById('viewport');
+            scale = 1;
+            panX = viewport.clientWidth / 2 - targetX - 135;
+            panY = viewport.clientHeight / 2 - targetY - 90;
+            updateTransform();
+        }
+
         function handleFormSubmit(e) {
             e.preventDefault();
             const idInput = document.getElementById('note-id-input').value;
             let title = document.getElementById('note-title-input').value.trim();
             const content = document.getElementById('note-content-input').value.trim();
-            const author = document.getElementById('note-author-input').value.trim();
+            const authorName = document.getElementById('note-author-name-input').value.trim();
+            const grade = document.getElementById('note-grade-select').value;
+            const cls = document.getElementById('note-class-select').value;
             const color = document.querySelector('input[name="note-color"]:checked').value;
 
             if (!content) return;
 
-            // 編集時または新規作成時、タイトルが空欄の場合、または「古い名前の挑戦」になっていた場合は自動で名前を反映
+            const newAuthor = buildAuthorString(grade, cls, authorName);
+            const oldAuthor = document.getElementById('note-old-author-input').value;
+
             if (idInput) {
                 const existingNote = window.notesData.find(n => n.id === idInput);
                 if (existingNote && (existingNote.creatorId === window.myCreatorId || window.isAdminMode)) {
-                    // もしタイトルが空欄、あるいは以前の自動生成タイトル（「〜の挑戦」）のままだった場合は、新しい名前に自動追従させる
-                    const oldAuthor = existingNote.author || '';
-                    const isOldAutoTitle = (!existingNote.title || existingNote.title === (oldAuthor + 'の挑戦') || existingNote.title === '私の挑戦' || existingNote.title === 'みんなの挑戦');
+                    const oldParsedName = parseAuthorString(oldAuthor).name;
+                    const oldAutoTitle = (oldParsedName ? (oldParsedName + 'の挑戦') : '私の挑戦');
+                    const isOldAutoTitle = (!existingNote.title || existingNote.title === oldAutoTitle || existingNote.title === '私の挑戦' || existingNote.title === 'みんなの挑戦');
 
-                    if (!title && isOldAutoTitle) {
-                        title = author ? (author + 'の挑戦') : '私の挑戦';
-                    } else if (!title) {
-                        title = existingNote.title; // ユーザーが意図的に空欄にした場合は既存を維持するかお好みで
+                    const newParsedName = authorName;
+                    const newAutoTitle = (newParsedName ? (newParsedName + 'の挑戦') : '私の挑戦');
+
+                    if (!title) {
+                        title = newAutoTitle;
+                    } else if (isOldAutoTitle && existingNote.title !== title) {
+                        title = newAutoTitle;
                     }
 
-                    existingNote.title = title || (author ? author + 'の挑戦' : '私の挑戦');
+                    existingNote.title = title;
                     existingNote.content = content;
-                    existingNote.author = author;
+                    existingNote.author = newAuthor;
                     existingNote.color = color;
                     saveNoteToDb(existingNote);
                 }
             } else {
-                // 新規作成時
                 if (!title) {
-                    title = author ? (author + 'の挑戦') : '私の挑戦';
+                    title = authorName ? (authorName + 'の挑戦') : '私の挑戦';
                 }
 
                 const viewport = document.getElementById('viewport');
@@ -621,7 +802,7 @@
                     id: 'note_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
                     title: title,
                     content: content,
-                    author: author,
+                    author: newAuthor,
                     color: color,
                     x: Math.max(200, Math.min(4800, centerX)),
                     y: Math.max(200, Math.min(4800, centerY)),
