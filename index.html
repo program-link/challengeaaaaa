@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>挑戦ボード</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Fonts Noto Sans JP -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Firebase SDK (Modular) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyAmAzC3zaChtQdmCK6LWdj8TQ8LmTyd1QA",
+            authDomain: "challenge-board-f7644.firebaseapp.com",
+            projectId: "challenge-board-f7644",
+            storageBucket: "challenge-board-f7644.firebasestorage.app",
+            messagingSenderId: "932081886160",
+            appId: "1:932081886160:web:905b17426a8fe57a100fd5",
+            measurementId: "G-JQ1HK0LKEQ"
+        };
+
+        const appId = 'school-freeboard-shared-v2';
+
+        let db, auth;
+        let isFirebaseConnected = false;
+
+        let myCreatorId = localStorage.getItem('freeboard_creator_id');
+        if (!myCreatorId) {
+            myCreatorId = 'user_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
+            localStorage.setItem('freeboard_creator_id', myCreatorId);
+        }
+        window.myCreatorId = myCreatorId;
+
+        window.isAdminMode = (window.location.hash === '#admin-administrator-()');
+
+        window.notesData = [];
+
+        window.initFirebase = async function() {
+            try {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                await signInAnonymously(auth);
+                isFirebaseConnected = true;
+                updateConnectionIndicator(true);
+                
+                const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'notes');
+                
+                onSnapshot(colRef, (snapshot) => {
+                    const notes = [];
+                    snapshot.forEach(docSnap => {
+                        notes.push({ id: docSnap.id, ...docSnap.data() });
+                    });
+                    
+                    window.notesData = notes;
+                    if (typeof renderNotes === 'function') renderNotes();
+                }, (error) => {
+                    console.warn("Firestore sync warning, falling back to local:", error);
+                    fallbackToLocal();
+                });
+
+            } catch (e) {
+                console.warn("Firebase connection failed, falling back to local:", e);
+                fallbackToLocal();
+            }
+        };
+
+        function fallbackToLocal() {
+            isFirebaseConnected = false;
+            updateConnectionIndicator(false);
+            const saved = localStorage.getItem('freeboard_local_notes');
+            window.notesData = saved ? JSON.parse(saved) : [];
+            if (typeof renderNotes === 'function') renderNotes();
+        }
+
+        function updateConnectionIndicator(isConnected) {
+            const indicator = document.getElementById('connection-indicator');
+            const ping = document.getElementById('connection-ping');
+            if (!indicator) return;
+
+            if (isConnected) {
+                indicator.className = 'w-3 h-3 rounded-full bg-emerald-500 relative flex items-center justify-center';
+                if (ping) ping.classList.remove('hidden');
+            } else {
+                indicator.className = 'w-3 h-3 rounded-full bg-amber-500 relative flex items-center justify-center';
+                if (ping) ping.classList.add('hidden');
+            }
+        }
+
+        window.saveNoteToDb = async function(note) {
+            if (isFirebaseConnected && db) {
+                try {
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notes', note.id), note);
+                } catch(e) {
+                    console.error("Error saving note to cloud:", e);
+                    saveLocalFallback(note);
+                }
+            } else {
+                saveLocalFallback(note);
+            }
+        };
+
+        function saveLocalFallback(note) {
+            const idx = window.notesData.findIndex(n => n.id === note.id);
+            if (idx >= 0) window.notesData[idx] = note;
+            else window.notesData.push(note);
+            localStorage.setItem('freeboard_local_notes', JSON.stringify(window.notesData));
+            if (typeof renderNotes === 'function') renderNotes();
+        }
+
+        window.deleteNoteFromDb = async function(noteId) {
+            if (isFirebaseConnected && db) {
+                try {
+                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'notes', noteId));
+                } catch(e) {
+                    console.error("Error deleting note from cloud:", e);
+                    deleteLocalFallback(noteId);
+                }
+            } else {
+                deleteLocalFallback(noteId);
+            }
+        };
+
+        function deleteLocalFallback(noteId) {
+            window.notesData = window.notesData.filter(n => n.id !== noteId);
+            localStorage.setItem('freeboard_local_notes', JSON.stringify(window.notesData));
+            if (typeof renderNotes === 'function') renderNotes();
+        }
+
+        window.onload = () => {
+            if (window.isAdminMode) {
+                const subTitleEl = document.getElementById('header-subtitle');
+                if (subTitleEl) {
+                    subTitleEl.innerText = '編集者モード';
+                    subTitleEl.className = 'text-[10px] font-bold text-indigo-600 block leading-tight';
+                }
+            }
+
+            window.initFirebase();
+            if (typeof initCanvas === 'function') initCanvas();
+        };
+    </script>
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            overflow: hidden;
+            user-select: none;
+            -webkit-user-select: none;
+            touch-action: none;
+            background-color: #f1f5f9;
+        }
+        .canvas-bg {
+            background-image: 
+                radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px),
+                radial-gradient(circle, #e2e8f0 1.5px, transparent 1.5px);
+            background-position: 0 0, 20px 20px;
+            background-size: var(--bg-size, 40px 40px);
+        }
+        .sticky-note {
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.12), 0 8px 10px -6px rgba(0, 0, 0, 0.08);
+            touch-action: none;
+        }
+        .interactive-btn {
+            touch-action: manipulation;
+            pointer-events: auto;
+        }
+        @keyframes shockwave {
+            0% {
+                transform: scale(1);
+                opacity: 0.8;
+            }
+            100% {
+                transform: scale(2.5);
+                opacity: 0;
+            }
+        }
+        .animate-shockwave {
+            animation: shockwave 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
+        }
+    </style>
+</head>
+<body class="w-screen h-screen relative">
+
+    <header class="absolute top-3 left-3 right-3 z-30 flex items-center justify-between pointer-events-none">
+        <div class="bg-white/95 backdrop-blur-md px-4 py-2.5 rounded-2xl shadow-md border border-slate-200 pointer-events-auto flex items-center space-x-2.5">
+            <div id="connection-indicator" class="w-3 h-3 rounded-full bg-amber-500 relative flex items-center justify-center shrink-0">
+                <div id="connection-ping" class="absolute w-full h-full rounded-full bg-emerald-400 animate-shockwave hidden"></div>
+            </div>
+            <div>
+                <h1 class="font-bold text-slate-800 text-xs sm:text-sm leading-tight">挑戦ボード</h1>
+                <span id="header-subtitle" class="text-[10px] text-slate-400 leading-tight"></span>
+            </div>
+        </div>
+
+        <!-- Zoom Controls -->
+        <div class="bg-white/95 backdrop-blur-md px-2.5 py-1.5 rounded-2xl shadow-md border border-slate-200 pointer-events-auto flex items-center space-x-1.5">
+            <button onclick="zoomIn()" class="w-8 h-8 rounded-xl hover:bg-slate-100 flex items-center justify-center text-slate-700 active:scale-95 transition interactive-btn">
+                <i class="fa-solid fa-magnifying-glass-plus text-xs"></i>
+            </button>
+            <span id="zoom-level" class="text-[11px] font-semibold text-slate-600 w-10 text-center">100%</span>
+            <button onclick="zoomOut()" class="w-8 h-8 rounded-xl hover:bg-slate-100 flex items-center justify-center text-slate-700 active:scale-95 transition interactive-btn">
+                <i class="fa-solid fa-magnifying-glass-minus text-xs"></i>
+            </button>
+            <button onclick="resetView()" class="px-3 py-1 text-[11px] font-medium bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl active:scale-95 transition interactive-btn">
+                中央へ
+            </button>
+        </div>
+    </header>
+
+    <div id="viewport" class="w-full h-full relative overflow-hidden canvas-bg">
+        <div id="canvas" class="absolute top-0 left-0 w-[5000px] h-[5000px] origin-top-left">
+            <!-- Notes injected dynamically -->
+        </div>
+    </div>
+
+    <!-- Plus Button -->
+    <div class="absolute bottom-24 right-6 md:bottom-20 md:right-8 z-40">
+        <button onclick="openCreateModal()" class="w-16 h-16 bg-gradient-to-tr from-indigo-600 to-violet-600 active:scale-90 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl transition transform interactive-btn">
+            <i class="fa-solid fa-plus"></i>
+        </button>
+    </div>
+
+    <!-- Note Modal (Create & Edit) -->
+    <div id="note-modal" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-md overflow-hidden transform scale-95 transition-transform duration-200">
+            <div class="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
+                <h3 id="modal-title-text" class="font-bold text-slate-800 text-base">新しい挑戦を書き込む</h3>
+                <button type="button" onclick="closeModal()" class="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center interactive-btn">
+                    <i class="fa-solid fa-xmark text-base"></i>
+                </button>
+            </div>
+            
+            <form id="note-form" onsubmit="handleFormSubmit(event)" class="p-5 space-y-4">
+                <input type="hidden" id="note-id-input">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">タイトル</label>
+                    <input type="text" id="note-title-input" placeholder="任意（空欄なら名前から自動作成）" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">本文<span class="text-rose-500">*</span></label>
+                    <textarea id="note-content-input" rows="3" required placeholder="本文" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm resize-none"></textarea>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">学年-組 名前</label>
+                    <input type="text" id="note-author-input" placeholder="任意" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">付箋の色</label>
+                    <div class="flex items-center justify-between px-2">
+                        <label class="cursor-pointer"><input type="radio" name="note-color" value="yellow" checked class="sr-only peer"><div class="w-9 h-9 rounded-full bg-amber-200 border-2 border-transparent peer-checked:border-slate-800 shadow-sm transition"></div></label>
+                        <label class="cursor-pointer"><input type="radio" name="note-color" value="pink" class="sr-only peer"><div class="w-9 h-9 rounded-full bg-rose-200 border-2 border-transparent peer-checked:border-slate-800 shadow-sm transition"></div></label>
+                        <label class="cursor-pointer"><input type="radio" name="note-color" value="blue" class="sr-only peer"><div class="w-9 h-9 rounded-full bg-sky-200 border-2 border-transparent peer-checked:border-slate-800 shadow-sm transition"></div></label>
+                        <label class="cursor-pointer"><input type="radio" name="note-color" value="green" class="sr-only peer"><div class="w-9 h-9 rounded-full bg-emerald-200 border-2 border-transparent peer-checked:border-slate-800 shadow-sm transition"></div></label>
+                        <label class="cursor-pointer"><input type="radio" name="note-color" value="purple" class="sr-only peer"><div class="w-9 h-9 rounded-full bg-purple-200 border-2 border-transparent peer-checked:border-slate-800 shadow-sm transition"></div></label>
+                        <label class="cursor-pointer"><input type="radio" name="note-color" value="white" class="sr-only peer"><div class="w-9 h-9 rounded-full bg-white border-2 border-slate-300 peer-checked:border-slate-800 shadow-sm transition"></div></label>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-end space-x-3 pt-2">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-600 bg-slate-100 interactive-btn">キャンセル</button>
+                    <button type="submit" class="px-5 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 text-white shadow-lg shadow-indigo-200 interactive-btn">ボードに貼る</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        const colorMap = {
+            yellow: { bg: 'bg-amber-100', border: 'border-amber-300', header: 'bg-amber-200/70', text: 'text-amber-900', accent: 'bg-amber-400' },
+            pink: { bg: 'bg-rose-100', border: 'border-rose-300', header: 'bg-rose-200/70', text: 'text-rose-900', accent: 'bg-rose-400' },
+            blue: { bg: 'bg-sky-100', border: 'border-sky-300', header: 'bg-sky-200/70', text: 'text-sky-900', accent: 'bg-sky-400' },
+            green: { bg: 'bg-emerald-100', border: 'border-emerald-300', header: 'bg-emerald-200/70', text: 'text-emerald-900', accent: 'bg-emerald-400' },
+            purple: { bg: 'bg-purple-100', border: 'border-purple-300', header: 'bg-purple-200/70', text: 'text-purple-900', accent: 'bg-purple-400' },
+            white: { bg: 'bg-white', border: 'border-slate-200', header: 'bg-slate-100', text: 'text-slate-800', accent: 'bg-slate-300' }
+        };
+
+        let panX = 0;
+        let panY = 0;
+        let scale = 1;
+
+        let pointers = new Map();
+        let initialPinchDistance = null;
+        let initialScale = 1;
+        let isDraggingNote = false;
+        let activeNoteId = null;
+        let noteStartX = 0, noteStartY = 0;
+        let dragStartPointerX = 0, dragStartPointerY = 0;
+
+        function initCanvas() {
+            const viewport = document.getElementById('viewport');
+            panX = viewport.clientWidth / 2 - 2500;
+            panY = viewport.clientHeight / 2 - 2500;
+            updateTransform();
+
+            viewport.addEventListener('pointerdown', (e) => {
+                if (e.target.closest('.sticky-note') || e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea')) return;
+                pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+            });
+
+            viewport.addEventListener('pointermove', (e) => {
+                if (!pointers.has(e.pointerId)) return;
+                const prev = pointers.get(e.pointerId);
+                const dx = e.clientX - prev.x;
+                const dy = e.clientY - prev.y;
+                pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+                if (pointers.size === 1 && !isDraggingNote) {
+                    panX += dx;
+                    panY += dy;
+                    updateTransform();
+                }
+            });
+
+            viewport.addEventListener('pointerup', (e) => {
+                pointers.delete(e.pointerId);
+                if (pointers.size < 2) initialPinchDistance = null;
+            });
+            viewport.addEventListener('pointercancel', (e) => {
+                pointers.delete(e.pointerId);
+                if (pointers.size < 2) initialPinchDistance = null;
+            });
+
+            viewport.addEventListener('touchstart', (e) => {
+                if (e.touches.length === 2) {
+                    initialPinchDistance = getHypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    initialScale = scale;
+                }
+            }, { passive: true });
+
+            viewport.addEventListener('touchmove', (e) => {
+                if (e.touches.length === 2 && initialPinchDistance) {
+                    const currentDistance = getHypot(
+                        e.touches[0].clientX - e.touches[1].clientX,
+                        e.touches[0].clientY - e.touches[1].clientY
+                    );
+                    
+                    const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+                    const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+
+                    const newScale = Math.max(0.3, Math.min(3.0, initialScale * (currentDistance / initialPinchDistance)));
+                    
+                    panX = midX - (midX - panX) * (newScale / scale);
+                    panY = midY - (midY - panY) * (newScale / scale);
+                    scale = newScale;
+
+                    updateTransform();
+                }
+            }, { passive: true });
+
+            viewport.addEventListener('touchend', (e) => {
+                if (e.touches.length < 2) {
+                    initialPinchDistance = null;
+                }
+            }, { passive: true });
+
+            renderNotes();
+        }
+
+        function getHypot(x, y) {
+            return Math.sqrt(x * x + y * y);
+        }
+
+        function updateTransform() {
+            const canvas = document.getElementById('canvas');
+            const viewport = document.getElementById('viewport');
+
+            canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+            document.getElementById('zoom-level').innerText = Math.round(scale * 100) + '%';
+
+            if (viewport) {
+                const baseSize = 40;
+                const scaledSize = baseSize * scale;
+                viewport.style.setProperty('--bg-size', `${scaledSize}px ${scaledSize}px`);
+                viewport.style.backgroundPosition = `${panX}px ${panY}px`;
+            }
+        }
+
+        function zoomIn() {
+            const viewport = document.getElementById('viewport');
+            const cx = viewport.clientWidth / 2;
+            const cy = viewport.clientHeight / 2;
+            const newScale = Math.min(scale * 1.25, 3.0);
+            panX = cx - (cx - panX) * (newScale / scale);
+            panY = cy - (cy - panY) * (newScale / scale);
+            scale = newScale;
+            updateTransform();
+        }
+
+        function zoomOut() {
+            const viewport = document.getElementById('viewport');
+            const cx = viewport.clientWidth / 2;
+            const cy = viewport.clientHeight / 2;
+            const newScale = Math.max(scale / 1.25, 0.3);
+            panX = cx - (cx - panX) * (newScale / scale);
+            panY = cy - (cy - panY) * (newScale / scale);
+            scale = newScale;
+            updateTransform();
+        }
+
+        function resetView() {
+            const viewport = document.getElementById('viewport');
+            scale = 1;
+            panX = viewport.clientWidth / 2 - 2500;
+            panY = viewport.clientHeight / 2 - 2500;
+            updateTransform();
+        }
+
+        function renderNotes() {
+            const canvas = document.getElementById('canvas');
+            canvas.innerHTML = '';
+
+            window.notesData.forEach(note => {
+                const colors = colorMap[note.color] || colorMap.yellow;
+                const div = document.createElement('div');
+                div.id = `note-${note.id}`;
+                div.className = `absolute sticky-note w-[270px] rounded-2xl border ${colors.border} ${colors.bg} flex flex-col overflow-hidden shadow-lg`;
+                div.style.transform = `translate(${note.x}px, ${note.y}px)`;
+                div.style.minHeight = '180px';
+
+                const isMyNote = (note.creatorId === window.myCreatorId) || window.isAdminMode;
+                
+                const actionButtonsHtml = isMyNote ? `
+                    <div class="flex items-center space-x-1.5" onpointerdown="event.stopPropagation()">
+                        <button type="button" onclick="openEditModal('${note.id}')" class="w-7 h-7 rounded-lg bg-black/5 hover:bg-black/10 flex items-center justify-center text-slate-700 text-xs transition interactive-btn" title="編集">
+                            <i class="fa-solid fa-pen pointer-events-none"></i>
+                        </button>
+                        <button type="button" onclick="confirmDelete('${note.id}')" class="w-7 h-7 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 flex items-center justify-center text-rose-700 text-xs transition interactive-btn" title="削除">
+                            <i class="fa-solid fa-trash-can pointer-events-none"></i>
+                        </button>
+                    </div>
+                ` : '';
+
+                div.innerHTML = `
+                    <div class="note-header px-4 py-3 ${colors.header} border-b ${colors.border} flex items-center justify-between" onpointerdown="startDragNote(event, '${note.id}')">
+                        <div class="flex items-center space-x-2 truncate pointer-events-none mr-2">
+                            <span class="w-2.5 h-2.5 rounded-full ${colors.accent} shrink-0"></span>
+                            <span class="font-bold text-xs ${colors.text} truncate">${escapeHtml(note.title)}</span>
+                        </div>
+                        <div>
+                            ${actionButtonsHtml}
+                        </div>
+                    </div>
+                    <div class="p-4 flex-1 flex flex-col justify-between pointer-events-none">
+                        <p class="text-xs sm:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">${escapeHtml(note.content)}</p>
+                        <div class="mt-3 pt-2 border-t border-black/5 flex items-center justify-between text-[11px] text-slate-500 font-medium">
+                            <span class="truncate max-w-[220px]"><i class="fa-solid fa-user-pen mr-1"></i>${escapeHtml(note.author || '匿名')}</span>
+                            ${note.creatorId === window.myCreatorId ? '<span class="text-[9px] bg-indigo-500/10 text-indigo-700 px-1.5 py-0.5 rounded-md">あなたの投稿</span>' : ''}
+                        </div>
+                    </div>
+                `;
+                canvas.appendChild(div);
+            });
+        }
+
+        function startDragNote(e, id) {
+            e.stopPropagation();
+
+            const note = window.notesData.find(n => n.id === id);
+            if (!note || (note.creatorId !== window.myCreatorId && !window.isAdminMode)) {
+                return;
+            }
+
+            isDraggingNote = true;
+            activeNoteId = id;
+            dragStartPointerX = e.clientX;
+            dragStartPointerY = e.clientY;
+            
+            if (note) {
+                noteStartX = note.x;
+                noteStartY = note.y;
+            }
+
+            const idx = window.notesData.findIndex(n => n.id === id);
+            if (idx >= 0) {
+                const [removed] = window.notesData.splice(idx, 1);
+                window.notesData.push(removed);
+                renderNotes();
+            }
+
+            const moveHandler = (moveEvent) => {
+                if (!isDraggingNote || activeNoteId !== id) return;
+                const dx = (moveEvent.clientX - dragStartPointerX) / scale;
+                const dy = (moveEvent.clientY - dragStartPointerY) / scale;
+                const targetNote = window.notesData.find(n => n.id === id);
+                if (targetNote) {
+                    targetNote.x = noteStartX + dx;
+                    targetNote.y = noteStartY + dy;
+                    const el = document.getElementById(`note-${id}`);
+                    if (el) {
+                        el.style.transform = `translate(${targetNote.x}px, ${targetNote.y}px)`;
+                    }
+                }
+            };
+
+            const upHandler = () => {
+                if (isDraggingNote && activeNoteId === id) {
+                    isDraggingNote = false;
+                    const targetNote = window.notesData.find(n => n.id === id);
+                    if (targetNote) saveNoteToDb(targetNote);
+                    activeNoteId = null;
+                }
+                window.removeEventListener('pointermove', moveHandler);
+                window.removeEventListener('pointerup', upHandler);
+            };
+
+            window.addEventListener('pointermove', moveHandler);
+            window.addEventListener('pointerup', upHandler);
+        }
+
+        function openCreateModal() {
+            document.getElementById('note-id-input').value = '';
+            document.getElementById('modal-title-text').innerText = '新しい挑戦を書き込む';
+            document.getElementById('note-title-input').value = '';
+            document.getElementById('note-content-input').value = '';
+            document.getElementById('note-author-input').value = '';
+            document.querySelector('input[name="note-color"][value="yellow"]').checked = true;
+            
+            showModal('note-modal');
+        }
+
+        function openEditModal(id) {
+            const note = window.notesData.find(n => n.id === id);
+            if (!note || (note.creatorId !== window.myCreatorId && !window.isAdminMode)) return;
+
+            document.getElementById('note-id-input').value = note.id;
+            document.getElementById('modal-title-text').innerText = '挑戦を編集する';
+            document.getElementById('note-title-input').value = note.title || '';
+            document.getElementById('note-content-input').value = note.content || '';
+            document.getElementById('note-author-input').value = note.author || '';
+            
+            const colorRadio = document.querySelector(`input[name="note-color"][value="${note.color || 'yellow'}"]`);
+            if (colorRadio) colorRadio.checked = true;
+
+            showModal('note-modal');
+        }
+
+        function confirmDelete(id) {
+            const note = window.notesData.find(n => n.id === id);
+            if (!note || (note.creatorId !== window.myCreatorId && !window.isAdminMode)) return;
+
+            if (confirm('この付箋を削除してもよろしいですか？')) {
+                deleteNoteFromDb(id);
+            }
+        }
+
+        function showModal(modalId) {
+            const modal = document.getElementById(modalId);
+            modal.classList.remove('hidden');
+            setTimeout(() => {
+                modal.classList.remove('opacity-0');
+                const content = modal.querySelector('div > div');
+                if (content) content.classList.remove('scale-95');
+            }, 10);
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('note-modal');
+            modal.classList.add('opacity-0');
+            const content = modal.querySelector('div > div');
+            if (content) content.classList.add('scale-95');
+            setTimeout(() => {
+                modal.classList.add('hidden');
+            }, 200);
+        }
+
+        function handleFormSubmit(e) {
+            e.preventDefault();
+            const idInput = document.getElementById('note-id-input').value;
+            let title = document.getElementById('note-title-input').value.trim();
+            const content = document.getElementById('note-content-input').value.trim();
+            const author = document.getElementById('note-author-input').value.trim();
+            const color = document.querySelector('input[name="note-color"]:checked').value;
+
+            if (!content) return;
+
+            // 編集時または新規作成時、タイトルが空欄の場合、または「古い名前の挑戦」になっていた場合は自動で名前を反映
+            if (idInput) {
+                const existingNote = window.notesData.find(n => n.id === idInput);
+                if (existingNote && (existingNote.creatorId === window.myCreatorId || window.isAdminMode)) {
+                    // もしタイトルが空欄、あるいは以前の自動生成タイトル（「〜の挑戦」）のままだった場合は、新しい名前に自動追従させる
+                    const oldAuthor = existingNote.author || '';
+                    const isOldAutoTitle = (!existingNote.title || existingNote.title === (oldAuthor + 'の挑戦') || existingNote.title === '私の挑戦' || existingNote.title === 'みんなの挑戦');
+
+                    if (!title && isOldAutoTitle) {
+                        title = author ? (author + 'の挑戦') : '私の挑戦';
+                    } else if (!title) {
+                        title = existingNote.title; // ユーザーが意図的に空欄にした場合は既存を維持するかお好みで
+                    }
+
+                    existingNote.title = title || (author ? author + 'の挑戦' : '私の挑戦');
+                    existingNote.content = content;
+                    existingNote.author = author;
+                    existingNote.color = color;
+                    saveNoteToDb(existingNote);
+                }
+            } else {
+                // 新規作成時
+                if (!title) {
+                    title = author ? (author + 'の挑戦') : '私の挑戦';
+                }
+
+                const viewport = document.getElementById('viewport');
+                const centerX = -panX + viewport.clientWidth / 2 + (Math.random() * 60 - 30);
+                const centerY = -panY + viewport.clientHeight / 2 + (Math.random() * 60 - 30);
+
+                const newNote = {
+                    id: 'note_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+                    title: title,
+                    content: content,
+                    author: author,
+                    color: color,
+                    x: Math.max(200, Math.min(4800, centerX)),
+                    y: Math.max(200, Math.min(4800, centerY)),
+                    creatorId: window.myCreatorId
+                };
+                window.notesData.push(newNote);
+                saveNoteToDb(newNote);
+            }
+
+            closeModal();
+            renderNotes();
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+        }
+    </script>
+</body>
+</html>
