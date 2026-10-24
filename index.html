@@ -192,9 +192,33 @@
             </div>
         </div>
 
-        <!-- 検索バー（アイコンなし） -->
-        <div class="bg-white/95 backdrop-blur-md px-3 py-1.5 rounded-2xl shadow-md border border-slate-200 pointer-events-auto flex items-center flex-1 max-w-xs">
-            <input type="text" id="search-input" oninput="filterNotes()" placeholder="投稿を検索..." class="w-full bg-transparent text-xs text-slate-700 placeholder-slate-400 focus:outline-none px-1">
+        <!-- 検索バー（元の紫の虫眼鏡アイコン復活 ＆ 下に学年・組のプルダウン） -->
+        <div class="bg-white/95 backdrop-blur-md px-3 py-2 rounded-2xl shadow-md border border-slate-200 pointer-events-auto flex flex-col gap-1.5 w-64 shrink-0">
+            <div class="flex items-center space-x-2">
+                <div class="w-6 h-6 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-600 shrink-0">
+                    <i class="fa-solid fa-magnifying-glass text-xs"></i>
+                </div>
+                <input type="text" id="search-input" oninput="filterNotes()" placeholder="投稿を検索..." class="w-full bg-transparent text-xs text-slate-700 placeholder-slate-400 focus:outline-none">
+            </div>
+            <div class="flex items-center space-x-1 pt-1 border-t border-slate-100">
+                <select id="grade-filter" onchange="filterNotes()" class="w-1/2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-700 px-1.5 py-1 focus:outline-none">
+                    <option value="">学年すべて</option>
+                    <option value="1年">1年</option>
+                    <option value="2年">2年</option>
+                    <option value="3年">3年</option>
+                    <option value="4年">4年</option>
+                    <option value="5年">5年</option>
+                    <option value="6年">6年</option>
+                </select>
+                <select id="class-filter" onchange="filterNotes()" class="w-1/2 bg-slate-50 border border-slate-200 rounded-lg text-[11px] text-slate-700 px-1.5 py-1 focus:outline-none">
+                    <option value="">組すべて</option>
+                    <option value="1組">1組</option>
+                    <option value="2組">2組</option>
+                    <option value="3組">3組</option>
+                    <option value="4組">4組</option>
+                    <option value="5組">5組</option>
+                </select>
+            </div>
         </div>
 
         <!-- Zoom Controls -->
@@ -247,19 +271,33 @@
                     <textarea id="note-content-input" rows="3" required placeholder="本文" class="w-full px-3.5 py-3 bg-slate-50 border border-slate-200 rounded-2xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm resize-none"></textarea>
                 </div>
 
-                <!-- 学年・組・名前を個別の入力欄に分離 -->
                 <div class="grid grid-cols-3 gap-2">
                     <div>
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">学年</label>
-                        <input type="text" id="note-grade-input" placeholder="例: 1年" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                        <select id="note-grade-input" class="w-full px-2 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="">選択</option>
+                            <option value="1年">1年</option>
+                            <option value="2年">2年</option>
+                            <option value="3年">3年</option>
+                            <option value="4年">4年</option>
+                            <option value="5年">5年</option>
+                            <option value="6年">6年</option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">組</label>
-                        <input type="text" id="note-class-input" placeholder="例: 2組" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                        <select id="note-class-input" class="w-full px-2 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                            <option value="">選択</option>
+                            <option value="1組">1組</option>
+                            <option value="2組">2組</option>
+                            <option value="3組">3組</option>
+                            <option value="4組">4組</option>
+                            <option value="5組">5組</option>
+                        </select>
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">名前</label>
-                        <input type="text" id="note-name-input" placeholder="例: 太郎" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
+                        <input type="text" id="note-name-input" placeholder="名前" class="w-full px-3 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 text-sm">
                     </div>
                 </div>
 
@@ -304,15 +342,13 @@
         let activeNoteId = null;
         let noteStartX = 0, noteStartY = 0;
         let dragStartPointerX = 0, dragStartPointerY = 0;
+        let hasInitializedView = false;
 
         function initCanvas() {
             const viewport = document.getElementById('viewport');
-            
-            // 初回または付箋がある場合にすべての付箋を囲むように初期表示を自動調整
-            fitAllNotes(true);
 
             viewport.addEventListener('pointerdown', (e) => {
-                if (e.target.closest('.sticky-note') || e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea')) return;
+                if (e.target.closest('.sticky-note') || e.target.closest('button') || e.target.closest('input') || e.target.closest('textarea') || e.target.closest('select')) return;
                 pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
             });
 
@@ -378,15 +414,16 @@
             renderNotes();
         }
 
-        // すべての付箋が画面に収まるように倍率と位置を自動調整する関数
-        function fitAllNotes(isInitial = false) {
+        function fitAllNotes(force = false) {
             const viewport = document.getElementById('viewport');
             if (!viewport) return;
 
             if (!window.notesData || window.notesData.length === 0) {
-                resetView();
+                resetViewCenter();
                 return;
             }
+
+            if (hasInitializedView && !force) return;
 
             let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             window.notesData.forEach(n => {
@@ -396,7 +433,7 @@
                 if (n.y + 200 > maxY) maxY = n.y + 200;
             });
 
-            const padding = 100;
+            const padding = 120;
             minX -= padding;
             minY -= padding;
             maxX += padding;
@@ -408,15 +445,26 @@
             const vWidth = viewport.clientWidth;
             const vHeight = viewport.clientHeight;
 
+            if (vWidth === 0 || vHeight === 0) return;
+
             const scaleX = vWidth / boardWidth;
             const scaleY = vHeight / boardHeight;
             
-            // 広がりに応じて自動で縮小・拡大（最小0.3〜最大1.2など）
             scale = Math.max(0.3, Math.min(1.2, Math.min(scaleX, scaleY)));
 
             panX = (vWidth / 2) - ((minX + maxX) / 2) * scale;
             panY = (vHeight / 2) - ((minY + maxY) / 2) * scale;
 
+            hasInitializedView = true;
+            updateTransform();
+        }
+
+        function resetViewCenter() {
+            const viewport = document.getElementById('viewport');
+            if (!viewport) return;
+            scale = 1.0;
+            panX = (viewport.clientWidth / 2) - 2500;
+            panY = (viewport.clientHeight / 2) - 2500;
             updateTransform();
         }
 
@@ -462,7 +510,7 @@
         }
 
         function resetView() {
-            fitAllNotes(false);
+            fitAllNotes(true);
         }
 
         function renderNotes() {
@@ -470,16 +518,22 @@
             canvas.innerHTML = '';
 
             const keyword = (document.getElementById('search-input')?.value || '').toLowerCase();
+            const selectedGrade = document.getElementById('grade-filter')?.value || '';
+            const selectedClass = document.getElementById('class-filter')?.value || '';
 
             window.notesData.forEach(note => {
-                // 検索フィルタリング（タイトル、本文、学年・組・名前のどこかに一致すれば表示）
                 const authorStr = note.author || '';
-                const matches = !keyword || 
+                
+                // 検索フィルタリング
+                const matchesKeyword = !keyword || 
                     (note.title && note.title.toLowerCase().includes(keyword)) ||
                     (note.content && note.content.toLowerCase().includes(keyword)) ||
                     (authorStr.toLowerCase().includes(keyword));
 
-                if (!matches) return;
+                const matchesGrade = !selectedGrade || authorStr.includes(selectedGrade);
+                const matchesClass = !selectedClass || authorStr.includes(selectedClass);
+
+                if (!matchesKeyword || !matchesGrade || !matchesClass) return;
 
                 const colors = colorMap[note.color] || colorMap.yellow;
                 const div = document.createElement('div');
@@ -521,6 +575,10 @@
                 `;
                 canvas.appendChild(div);
             });
+
+            if (!hasInitializedView && window.notesData.length > 0) {
+                fitAllNotes(false);
+            }
         }
 
         function filterNotes() {
@@ -533,11 +591,10 @@
             const note = window.notesData.find(n => n.id === id);
             if (!note) return;
 
-            // 自分の付箋、または管理者モードのときは「付箋の移動」を行う
             const canMove = (note.creatorId === window.myCreatorId || window.isAdminMode);
 
             if (!canMove) {
-                // 他人の付箋の場合は、触ったときにも「背景のパン（スライド）」として動かせるようにする
+                // 他人の付箋を触ったときは背景スライド（パン）として動かす
                 pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
                 return;
             }
@@ -587,25 +644,6 @@
             window.addEventListener('pointerup', upHandler);
         }
 
-        // 他人の付箋を触ってスライドさせたとき用のグローバルポインター移動ハンドラー
-        window.addEventListener('pointermove', (e) => {
-            if (!pointers.has(e.pointerId)) return;
-            const prev = pointers.get(e.pointerId);
-            const dx = e.clientX - prev.x;
-            const dy = e.clientY - prev.y;
-            pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-
-            if (pointers.size === 1 && !isDraggingNote) {
-                panX += dx;
-                panY += dy;
-                updateTransform();
-            }
-        });
-
-        window.addEventListener('pointerup', (e) => {
-            pointers.delete(e.pointerId);
-        });
-
         function openCreateModal() {
             document.getElementById('note-id-input').value = '';
             document.getElementById('modal-title-text').innerText = '新しい挑戦を書き込む';
@@ -628,7 +666,6 @@
             document.getElementById('note-title-input').value = note.title || '';
             document.getElementById('note-content-input').value = note.content || '';
             
-            // 既存の author（例: "1年 2組 太郎" または "1年-2組 太郎"）を分解して復元
             const authorParts = (note.author || '').split(/[\s\-]/);
             document.getElementById('note-grade-input').value = authorParts[0] || '';
             document.getElementById('note-class-input').value = authorParts[1] || '';
@@ -679,7 +716,6 @@
             const cls = document.getElementById('note-class-input').value.trim();
             const name = document.getElementById('note-name-input').value.trim();
 
-            // 学年・組・名前を結合して author を作成
             let authorParts = [];
             if (grade) authorParts.push(grade);
             if (cls) authorParts.push(cls);
@@ -688,7 +724,6 @@
 
             if (!content) return;
 
-            // タイトルが空欄の場合、入力された名前を使って「○○の挑戦」にする
             if (!title) {
                 if (name) {
                     title = name + 'の挑戦';
