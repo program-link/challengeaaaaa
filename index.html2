@@ -13,7 +13,7 @@
     <!-- Firebase SDK (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithRedirect, getRedirectResult, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -34,6 +34,7 @@
         window.isAdminMode = (window.location.hash === '#admin-administrator-()');
         window.notesData = [];
         window.currentUser = null;
+        window.isViewOnlyMode = false;
         window.loginSessions = JSON.parse(localStorage.getItem('freeboard_login_sessions') || '[]');
 
         window.initFirebase = async function() {
@@ -42,9 +43,16 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
+                // iPad Safari等のリダイレクトログイン結果を受け取る
+                try {
+                    await getRedirectResult(auth);
+                } catch (redirectErr) {
+                    console.warn("Redirect result info:", redirectErr);
+                }
+
                 // 認証状態の監視
                 onAuthStateChanged(auth, (user) => {
-                    if (user) {
+                    if (user && !user.isAnonymous) {
                         window.currentUser = {
                             uid: user.uid,
                             displayName: user.displayName || '名無しさん',
@@ -52,16 +60,21 @@
                             photoURL: user.photoURL || ''
                         };
                         window.myCreatorId = user.uid;
+                        window.isViewOnlyMode = false;
 
-                        // ログインセッションの記録（編集者モード用：一度でもログインした人・今ログインしている人）
                         recordLoginSession(window.currentUser);
                         updateUserIconUI();
                         closeLoginModal();
+                        if (typeof renderNotes === 'function') renderNotes();
                     } else {
                         window.currentUser = null;
+                        window.myCreatorId = null;
                         updateUserIconUI();
-                        // 初回ログインまたは未ログインの場合はログインモーダルを表示
-                        openLoginModal();
+                        // 閲覧モードをまだ選んでいない場合のみログインモーダルを表示
+                        if (!window.isViewOnlyMode) {
+                            openLoginModal();
+                        }
+                        if (typeof renderNotes === 'function') renderNotes();
                     }
                 });
 
@@ -102,7 +115,6 @@
                 isCurrent: true
             };
 
-            // 他のセッションのisCurrentを一旦falseに
             sessions.forEach(s => s.isCurrent = false);
 
             if (existingIndex >= 0) {
@@ -116,13 +128,44 @@
         }
 
         window.googleLogin = async function() {
+            const btn = document.getElementById('google-login-btn');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-2"></i><span>移動中...</span>';
+            }
             try {
                 const provider = new GoogleAuthProvider();
-                await signInWithPopup(auth, provider);
+                // iPad / モバイルSafariで真っ白になるのを防ぐため、iPad/iPhone/Safari判定時はリダイレクトを使用
+                const isMobileOrSafari = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
+                                         (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ||
+                                         (/^((?!chrome|android).)*safari/i.test(navigator.userAgent));
+
+                if (isMobileOrSafari) {
+                    await signInWithRedirect(auth, provider);
+                } else {
+                    await signInWithPopup(auth, provider);
+                }
             } catch (e) {
                 console.error("Google Login failed:", e);
-                alert("Googleログインに失敗しました。ポップアップがブロックされていないか確認してください。");
+                // ポップアップ失敗時はリダイレクトにフォールバック
+                try {
+                    const provider = new GoogleAuthProvider();
+                    await signInWithRedirect(auth, provider);
+                } catch (e2) {
+                    alert("ログインできませんでした。FirebaseコンソールでGoogleログインが有効になっているか確認してください。\nエラー: " + e.message);
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.innerHTML = '<span>Googleアカウントでログイン</span>';
+                    }
+                }
             }
+        };
+
+        window.enterViewOnlyMode = function() {
+            window.isViewOnlyMode = true;
+            closeLoginModal();
+            updateUserIconUI();
+            if (typeof renderNotes === 'function') renderNotes();
         };
 
         window.logoutUser = async function() {
@@ -134,6 +177,7 @@
                         localStorage.setItem('freeboard_login_sessions', JSON.stringify(sessions));
                         window.loginSessions = sessions;
                     }
+                    window.isViewOnlyMode = false;
                     await signOut(auth);
                 } catch(e) {
                     console.error("Logout failed:", e);
@@ -147,11 +191,8 @@
             const saved = localStorage.getItem('freeboard_local_notes');
             window.notesData = saved ? JSON.parse(saved) : [];
             
-            // ローカルフォールバック時のダミーユーザー
-            if (!window.currentUser) {
-                window.currentUser = { uid: 'local_user', displayName: 'ゲストユーザー', photoURL: '' };
-                window.myCreatorId = 'local_user';
-                updateUserIconUI();
+            if (!window.currentUser && !window.isViewOnlyMode) {
+                openLoginModal();
             }
 
             if (typeof renderNotes === 'function') renderNotes();
@@ -200,7 +241,7 @@
                 `;
             } else {
                 container.innerHTML = `
-                    <button onclick="openLoginModal()" class="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 transition interactive-btn">
+                    <button onclick="openLoginModal(false)" class="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 transition interactive-btn">
                         ログイン
                     </button>
                 `;
@@ -352,7 +393,7 @@
 
     <!-- Plus Button -->
     <div class="absolute bottom-24 right-6 md:bottom-20 md:right-8 z-40">
-        <button onclick="openCreateModal()" class="w-16 h-16 bg-indigo-600 hover:bg-indigo-700 active:scale-90 text-white rounded-full shadow-xl flex items-center justify-center text-2xl transition transform interactive-btn" title="新しい挑戦を書き込む">
+        <button onclick="handlePlusClick()" class="w-16 h-16 bg-indigo-600 hover:bg-indigo-700 active:scale-90 text-white rounded-full shadow-xl flex items-center justify-center text-2xl transition transform interactive-btn" title="新しい挑戦を書き込む">
             <i class="fa-solid fa-plus"></i>
         </button>
     </div>
@@ -379,20 +420,28 @@
         </div>
     </div>
 
-    <!-- Login Modal (Forced on first login) -->
+    <!-- Login Modal -->
     <div id="login-modal" class="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
-        <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-sm overflow-hidden transform scale-95 transition-transform duration-200 text-center p-6 space-y-5">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-sm overflow-hidden transform scale-95 transition-transform duration-200 text-center p-6 space-y-4">
             <div class="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-inner">
-                <i class="fa-solid fa-lock"></i>
+                <i class="fa-solid fa-user-check"></i>
             </div>
             <div class="space-y-1">
-                <h3 class="font-bold text-slate-800 text-lg">ログインが必要です</h3>
-                <p class="text-xs text-slate-500 leading-relaxed">このボードを利用するには、Googleアカウントによる初回ログインを行ってください。</p>
+                <h3 id="login-modal-title" class="font-bold text-slate-800 text-lg">挑戦ボードへようこそ</h3>
+                <p id="login-modal-desc" class="text-xs text-slate-500 leading-relaxed">付箋の投稿・編集を行うにはGoogleログインが必要です。見るだけの場合は「ボードを閲覧」を選択してください。</p>
             </div>
-            <button onclick="googleLogin()" class="w-full py-3.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold rounded-2xl shadow-sm flex items-center justify-center space-x-3 transition active:scale-95 interactive-btn">
-                <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
-                <span class="text-sm">Googleアカウントでログイン</span>
-            </button>
+            <div class="space-y-2.5 pt-1">
+                <button id="google-login-btn" onclick="googleLogin()" class="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-2xl shadow-md flex items-center justify-center space-x-3 transition active:scale-95 interactive-btn">
+                    <div class="bg-white p-1 rounded-full">
+                        <svg class="w-4 h-4" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+                    </div>
+                    <span class="text-sm">Googleアカウントでログイン</span>
+                </button>
+                <button onclick="enterViewOnlyMode()" class="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-2xl text-xs transition active:scale-95 interactive-btn flex items-center justify-center space-x-2">
+                    <i class="fa-regular fa-eye"></i>
+                    <span>ボードを閲覧（見るだけ）</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -522,7 +571,7 @@
         </div>
     </div>
 
-    <!-- Admin Note Detail Modal (Editor Mode Only: History, Times, User info) -->
+    <!-- Admin Note Detail Modal -->
     <div id="admin-detail-modal" onclick="if(event.target === this) closeAdminDetailModal()" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
         <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden transform scale-95 transition-transform duration-200">
             <div class="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between shrink-0">
@@ -759,7 +808,6 @@
                 div.style.transform = `translate(${note.x}px, ${note.y}px)`;
                 div.style.minHeight = '180px';
 
-                // 編集者モードのときは付箋をクリックすると詳細モーダルが開く
                 if (window.isAdminMode) {
                     div.style.cursor = 'pointer';
                     div.onclick = (e) => {
@@ -768,7 +816,9 @@
                     };
                 }
 
-                const isMyNote = (note.creatorId === window.myCreatorId) || window.isAdminMode;
+                // 閲覧専用モード（未ログイン）の場合は自分の付箋でも編集・削除ボタンを表示しない
+                const isLoggedIn = Boolean(window.currentUser);
+                const isMyNote = (isLoggedIn && note.creatorId === window.myCreatorId) || window.isAdminMode;
                 
                 const actionButtonsHtml = isMyNote ? `
                     <div class="flex items-center space-x-1.5" onpointerdown="event.stopPropagation()">
@@ -781,10 +831,11 @@
                     </div>
                 ` : '';
 
-                // 作成者のアバター画像（編集者モード時はアイコン表示）
-                const userAvatarHtml = note.userPhoto ? 
+                const userAvatarHtml = (window.isAdminMode && note.userPhoto) ? 
                     `<img src="${note.userPhoto}" class="w-5 h-5 rounded-full object-cover mr-1.5 inline-block border border-slate-200">` : 
                     `<i class="fa-solid fa-user-pen mr-1"></i>`;
+
+                const displayAuthor = window.isAdminMode ? (note.userName || note.author || '匿名') : (note.author || '匿名');
 
                 div.innerHTML = `
                     <div class="note-header px-4 py-3 ${colors.header} border-b ${colors.border} flex items-center justify-between" onpointerdown="startDragNote(event, '${note.id}')">
@@ -799,8 +850,8 @@
                     <div class="p-4 flex-1 flex flex-col justify-between pointer-events-none" onpointerdown="startDragNote(event, '${note.id}')">
                         <p class="text-xs sm:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed pointer-events-auto">${escapeHtml(note.content)}</p>
                         <div class="mt-3 pt-2 border-t border-black/5 flex items-center justify-between text-[11px] text-slate-500 font-medium">
-                            <span class="truncate max-w-[220px] flex items-center">${userAvatarHtml}${escapeHtml(note.userName || note.author || '匿名')}</span>
-                            ${note.creatorId === window.myCreatorId ? '<span class="text-[9px] bg-indigo-600/10 text-indigo-700 px-1.5 py-0.5 rounded-md font-semibold">あなたの投稿</span>' : ''}
+                            <span class="truncate max-w-[220px] flex items-center">${userAvatarHtml}${escapeHtml(displayAuthor)}</span>
+                            ${(isLoggedIn && note.creatorId === window.myCreatorId) ? '<span class="text-[9px] bg-indigo-600/10 text-indigo-700 px-1.5 py-0.5 rounded-md font-semibold">あなたの投稿</span>' : ''}
                         </div>
                     </div>
                 `;
@@ -812,7 +863,6 @@
             }
         }
 
-        // 編集者モードでの詳細ポップアップ関連
         function openAdminDetailModalForNote(noteId) {
             const note = window.notesData.find(n => n.id === noteId);
             if (!note) return;
@@ -903,12 +953,32 @@
             `).join('');
         }
 
-        function openLoginModal() {
+        function openLoginModal(fromPlusButton = false) {
+            const titleEl = document.getElementById('login-modal-title');
+            const descEl = document.getElementById('login-modal-desc');
+            if (titleEl && descEl) {
+                if (fromPlusButton) {
+                    titleEl.innerText = '投稿にはログインが必要です';
+                    descEl.innerText = '新しい付箋を書き込むにはGoogleアカウントでログインしてください。';
+                } else {
+                    titleEl.innerText = '挑戦ボードへようこそ';
+                    descEl.innerText = '付箋の投稿・編集を行うにはGoogleログインが必要です。見るだけの場合は「ボードを閲覧」を選択してください。';
+                }
+            }
             showModal('login-modal');
         }
 
         function closeLoginModal() {
             closeModalById('login-modal');
+        }
+
+        // プラスボタンを押したときの挙動：未ログインならログインモーダルを開く
+        function handlePlusClick() {
+            if (!window.currentUser) {
+                openLoginModal(true);
+                return;
+            }
+            openCreateModal();
         }
 
         function openSearchModal() {
@@ -1019,7 +1089,8 @@
             const note = window.notesData.find(n => n.id === id);
             if (!note) return;
 
-            const canMove = (note.creatorId === window.myCreatorId || window.isAdminMode);
+            // 未ログイン（閲覧モード）では移動不可
+            const canMove = (Boolean(window.currentUser) && note.creatorId === window.myCreatorId) || window.isAdminMode;
 
             if (!canMove) {
                 pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -1063,6 +1134,10 @@
         }
 
         function openCreateModal() {
+            if (!window.currentUser) {
+                openLoginModal(true);
+                return;
+            }
             document.getElementById('note-id-input').value = '';
             document.getElementById('modal-title-text').innerText = '新しい挑戦を書き込む';
             document.getElementById('note-title-input').value = '';
@@ -1075,6 +1150,7 @@
         }
 
         function openEditModal(id) {
+            if (!window.currentUser && !window.isAdminMode) return;
             const note = window.notesData.find(n => n.id === id);
             if (!note || (note.creatorId !== window.myCreatorId && !window.isAdminMode)) return;
 
@@ -1095,6 +1171,7 @@
         }
 
         function confirmDelete(id) {
+            if (!window.currentUser && !window.isAdminMode) return;
             const note = window.notesData.find(n => n.id === id);
             if (!note || (note.creatorId !== window.myCreatorId && !window.isAdminMode)) return;
 
@@ -1131,6 +1208,11 @@
 
         function handleFormSubmit(e) {
             e.preventDefault();
+            if (!window.currentUser && !window.isAdminMode) {
+                openLoginModal(true);
+                return;
+            }
+
             const idInput = document.getElementById('note-id-input').value;
             let title = document.getElementById('note-title-input').value.trim();
             const content = document.getElementById('note-content-input').value.trim();
@@ -1161,7 +1243,6 @@
             if (idInput) {
                 const existingNote = window.notesData.find(n => n.id === idInput);
                 if (existingNote && (existingNote.creatorId === window.myCreatorId || window.isAdminMode)) {
-                    // 変更前の内容を履歴に保存
                     if (existingNote.content !== content) {
                         if (!existingNote.history) existingNote.history = [];
                         existingNote.history.push({
