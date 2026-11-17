@@ -13,7 +13,7 @@
     <!-- Firebase SDK (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         const firebaseConfig = {
@@ -31,15 +31,10 @@
         let db, auth;
         let isFirebaseConnected = false;
 
-        let myCreatorId = localStorage.getItem('freeboard_creator_id');
-        if (!myCreatorId) {
-            myCreatorId = 'user_' + Math.random().toString(36).substring(2, 11) + Date.now().toString(36);
-            localStorage.setItem('freeboard_creator_id', myCreatorId);
-        }
-        window.myCreatorId = myCreatorId;
-
         window.isAdminMode = (window.location.hash === '#admin-administrator-()');
         window.notesData = [];
+        window.currentUser = null;
+        window.loginSessions = JSON.parse(localStorage.getItem('freeboard_login_sessions') || '[]');
 
         window.initFirebase = async function() {
             try {
@@ -47,7 +42,29 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
-                await signInAnonymously(auth);
+                // 認証状態の監視
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        window.currentUser = {
+                            uid: user.uid,
+                            displayName: user.displayName || '名無しさん',
+                            email: user.email || '',
+                            photoURL: user.photoURL || ''
+                        };
+                        window.myCreatorId = user.uid;
+
+                        // ログインセッションの記録（編集者モード用：一度でもログインした人・今ログインしている人）
+                        recordLoginSession(window.currentUser);
+                        updateUserIconUI();
+                        closeLoginModal();
+                    } else {
+                        window.currentUser = null;
+                        updateUserIconUI();
+                        // 初回ログインまたは未ログインの場合はログインモーダルを表示
+                        openLoginModal();
+                    }
+                });
+
                 isFirebaseConnected = true;
                 updateConnectionIndicator(true);
                 
@@ -73,11 +90,70 @@
             }
         };
 
+        function recordLoginSession(user) {
+            const sessions = JSON.parse(localStorage.getItem('freeboard_login_sessions') || '[]');
+            const existingIndex = sessions.findIndex(s => s.uid === user.uid);
+            const sessionData = {
+                uid: user.uid,
+                displayName: user.displayName,
+                email: user.email,
+                photoURL: user.photoURL,
+                lastLoginAt: new Date().toISOString(),
+                isCurrent: true
+            };
+
+            // 他のセッションのisCurrentを一旦falseに
+            sessions.forEach(s => s.isCurrent = false);
+
+            if (existingIndex >= 0) {
+                sessions[existingIndex] = sessionData;
+            } else {
+                sessions.push(sessionData);
+            }
+            window.loginSessions = sessions;
+            localStorage.setItem('freeboard_login_sessions', JSON.stringify(sessions));
+            if (typeof renderAdminTabs === 'function') renderAdminTabs();
+        }
+
+        window.googleLogin = async function() {
+            try {
+                const provider = new GoogleAuthProvider();
+                await signInWithPopup(auth, provider);
+            } catch (e) {
+                console.error("Google Login failed:", e);
+                alert("Googleログインに失敗しました。ポップアップがブロックされていないか確認してください。");
+            }
+        };
+
+        window.logoutUser = async function() {
+            if (confirm("ログアウトしますか？")) {
+                try {
+                    if (window.currentUser) {
+                        const sessions = JSON.parse(localStorage.getItem('freeboard_login_sessions') || '[]');
+                        sessions.forEach(s => s.isCurrent = false);
+                        localStorage.setItem('freeboard_login_sessions', JSON.stringify(sessions));
+                        window.loginSessions = sessions;
+                    }
+                    await signOut(auth);
+                } catch(e) {
+                    console.error("Logout failed:", e);
+                }
+            }
+        };
+
         function fallbackToLocal() {
             isFirebaseConnected = false;
             updateConnectionIndicator(false);
             const saved = localStorage.getItem('freeboard_local_notes');
             window.notesData = saved ? JSON.parse(saved) : [];
+            
+            // ローカルフォールバック時のダミーユーザー
+            if (!window.currentUser) {
+                window.currentUser = { uid: 'local_user', displayName: 'ゲストユーザー', photoURL: '' };
+                window.myCreatorId = 'local_user';
+                updateUserIconUI();
+            }
+
             if (typeof renderNotes === 'function') renderNotes();
             if (typeof renderSearchList === 'function') renderSearchList();
         }
@@ -95,6 +171,46 @@
                 if (ping) ping.classList.add('hidden');
             }
         }
+
+        function updateUserIconUI() {
+            const container = document.getElementById('user-icon-container');
+            if (!container) return;
+
+            if (window.currentUser) {
+                const avatar = window.currentUser.photoURL ? 
+                    `<img src="${window.currentUser.photoURL}" class="w-10 h-10 rounded-full object-cover border border-slate-200">` :
+                    `<div class="w-10 h-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-sm">${(window.currentUser.displayName || 'G')[0]}</div>`;
+                
+                container.innerHTML = `
+                    <div class="relative group">
+                        <button onclick="toggleUserMenu()" class="flex items-center space-x-2 focus:outline-none interactive-btn" title="${window.currentUser.displayName}">
+                            ${avatar}
+                        </button>
+                        <div id="user-dropdown-menu" class="absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-slate-100 py-2 hidden z-50">
+                            <div class="px-4 py-2 border-b border-slate-100">
+                                <p class="text-xs font-bold text-slate-800 truncate">${escapeHtml(window.currentUser.displayName)}</p>
+                                <p class="text-[10px] text-slate-400 truncate">${escapeHtml(window.currentUser.email || '')}</p>
+                            </div>
+                            <button onclick="logoutUser()" class="w-full text-left px-4 py-2 text-xs text-rose-600 hover:bg-rose-50 font-medium flex items-center space-x-2">
+                                <i class="fa-solid fa-right-from-bracket"></i>
+                                <span>ログアウト</span>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            } else {
+                container.innerHTML = `
+                    <button onclick="openLoginModal()" class="px-3.5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold shadow-md hover:bg-indigo-700 transition interactive-btn">
+                        ログイン
+                    </button>
+                `;
+            }
+        }
+
+        window.toggleUserMenu = function() {
+            const menu = document.getElementById('user-dropdown-menu');
+            if (menu) menu.classList.toggle('hidden');
+        };
 
         window.saveNoteToDb = async function(note) {
             if (isFirebaseConnected && db) {
@@ -145,6 +261,9 @@
                     subTitleEl.innerText = '編集者モード';
                     subTitleEl.className = 'text-[10px] font-bold text-indigo-600 block leading-tight';
                 }
+                const adminPanel = document.getElementById('admin-panel-container');
+                if (adminPanel) adminPanel.classList.remove('hidden');
+                if (typeof renderAdminTabs === 'function') renderAdminTabs();
             }
             window.initFirebase();
             if (typeof initCanvas === 'function') initCanvas();
@@ -201,7 +320,7 @@
             </div>
         </div>
 
-        <!-- Right Controls: Search Trigger & Zoom -->
+        <!-- Right Controls: Search Trigger, Zoom, User Profile Icon -->
         <div class="flex items-center gap-2 pointer-events-auto shrink-0">
             <button onclick="openSearchModal()" class="w-11 h-11 bg-indigo-600 hover:bg-indigo-700 active:scale-95 text-white rounded-2xl shadow-md flex items-center justify-center transition interactive-btn" title="投稿を検索">
                 <i class="fa-solid fa-magnifying-glass text-sm"></i>
@@ -219,6 +338,11 @@
                     中央へ
                 </button>
             </div>
+
+            <!-- User Icon / Logout Control -->
+            <div id="user-icon-container" class="bg-white/95 backdrop-blur-md p-1 rounded-2xl shadow-md border border-slate-200 flex items-center">
+                <!-- Dynamic Loaded -->
+            </div>
         </div>
     </header>
 
@@ -231,6 +355,45 @@
         <button onclick="openCreateModal()" class="w-16 h-16 bg-indigo-600 hover:bg-indigo-700 active:scale-90 text-white rounded-full shadow-xl flex items-center justify-center text-2xl transition transform interactive-btn" title="新しい挑戦を書き込む">
             <i class="fa-solid fa-plus"></i>
         </button>
+    </div>
+
+    <!-- Admin Panel (Shown only in editor mode) -->
+    <div id="admin-panel-container" class="absolute bottom-3 left-3 right-3 z-30 pointer-events-none hidden">
+        <div class="max-w-2xl mx-auto bg-white/95 backdrop-blur-md rounded-2xl shadow-xl border border-indigo-100 p-3 pointer-events-auto flex flex-col space-y-2">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                <div class="flex items-center space-x-2">
+                    <div class="w-6 h-6 rounded-lg bg-indigo-600 text-white flex items-center justify-center text-xs">
+                        <i class="fa-solid fa-shield-halved"></i>
+                    </div>
+                    <span class="text-xs font-bold text-slate-800">編集者モード：ログインユーザー管理タブ</span>
+                </div>
+                <div class="flex items-center space-x-2 text-[11px]">
+                    <span class="inline-flex items-center text-emerald-600 font-semibold"><span class="w-2 h-2 rounded-full bg-emerald-500 inline-block mr-1 animate-pulse"></span>今ログイン中</span>
+                    <span class="text-slate-400">|</span>
+                    <span class="text-slate-600 font-semibold">過去にログインしたアカウント一覧</span>
+                </div>
+            </div>
+            <div id="admin-sessions-list" class="max-h-32 overflow-y-auto space-y-1.5 scrollable-list pr-1">
+                <!-- Dynamically rendered -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Login Modal (Forced on first login) -->
+    <div id="login-modal" class="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-sm overflow-hidden transform scale-95 transition-transform duration-200 text-center p-6 space-y-5">
+            <div class="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl mx-auto flex items-center justify-center text-2xl shadow-inner">
+                <i class="fa-solid fa-lock"></i>
+            </div>
+            <div class="space-y-1">
+                <h3 class="font-bold text-slate-800 text-lg">ログインが必要です</h3>
+                <p class="text-xs text-slate-500 leading-relaxed">このボードを利用するには、Googleアカウントによる初回ログインを行ってください。</p>
+            </div>
+            <button onclick="googleLogin()" class="w-full py-3.5 bg-white border border-slate-300 hover:bg-slate-50 text-slate-700 font-bold rounded-2xl shadow-sm flex items-center justify-center space-x-3 transition active:scale-95 interactive-btn">
+                <svg class="w-5 h-5" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"/></svg>
+                <span class="text-sm">Googleアカウントでログイン</span>
+            </button>
+        </div>
     </div>
 
     <!-- Search Modal -->
@@ -356,6 +519,26 @@
                     <button type="submit" class="px-5 py-2.5 rounded-xl text-sm font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md interactive-btn">ボードに貼る</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Admin Note Detail Modal (Editor Mode Only: History, Times, User info) -->
+    <div id="admin-detail-modal" onclick="if(event.target === this) closeAdminDetailModal()" class="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-200 p-4">
+        <div class="bg-white rounded-3xl shadow-2xl border border-slate-100 w-full max-w-lg max-h-[85vh] flex flex-col overflow-hidden transform scale-95 transition-transform duration-200">
+            <div class="px-5 py-4 bg-slate-50 border-b border-slate-100 flex items-center justify-between shrink-0">
+                <div class="flex items-center space-x-2">
+                    <div class="w-7 h-7 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs">
+                        <i class="fa-solid fa-circle-info"></i>
+                    </div>
+                    <h3 class="font-bold text-slate-800 text-base">付箋の詳細・編集履歴 (編集者モード)</h3>
+                </div>
+                <button type="button" onclick="closeAdminDetailModal()" class="w-8 h-8 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-700 flex items-center justify-center interactive-btn">
+                    <i class="fa-solid fa-xmark text-base"></i>
+                </button>
+            </div>
+            <div id="admin-detail-content" class="p-5 overflow-y-auto space-y-4 flex-1 bg-slate-50/50 scrollable-list text-xs sm:text-sm">
+                <!-- Dynamically populated -->
+            </div>
         </div>
     </div>
 
@@ -525,7 +708,6 @@
             }
         }
 
-        // 100%基準の20%刻み拡大
         function zoomIn() {
             const viewport = document.getElementById('viewport');
             const cx = viewport.clientWidth / 2;
@@ -543,7 +725,6 @@
             updateTransform();
         }
 
-        // 100%基準の20%刻み縮小
         function zoomOut() {
             const viewport = document.getElementById('viewport');
             const cx = viewport.clientWidth / 2;
@@ -578,6 +759,15 @@
                 div.style.transform = `translate(${note.x}px, ${note.y}px)`;
                 div.style.minHeight = '180px';
 
+                // 編集者モードのときは付箋をクリックすると詳細モーダルが開く
+                if (window.isAdminMode) {
+                    div.style.cursor = 'pointer';
+                    div.onclick = (e) => {
+                        if (e.target.closest('button')) return;
+                        openAdminDetailModalForNote(note.id);
+                    };
+                }
+
                 const isMyNote = (note.creatorId === window.myCreatorId) || window.isAdminMode;
                 
                 const actionButtonsHtml = isMyNote ? `
@@ -590,6 +780,11 @@
                         </button>
                     </div>
                 ` : '';
+
+                // 作成者のアバター画像（編集者モード時はアイコン表示）
+                const userAvatarHtml = note.userPhoto ? 
+                    `<img src="${note.userPhoto}" class="w-5 h-5 rounded-full object-cover mr-1.5 inline-block border border-slate-200">` : 
+                    `<i class="fa-solid fa-user-pen mr-1"></i>`;
 
                 div.innerHTML = `
                     <div class="note-header px-4 py-3 ${colors.header} border-b ${colors.border} flex items-center justify-between" onpointerdown="startDragNote(event, '${note.id}')">
@@ -604,7 +799,7 @@
                     <div class="p-4 flex-1 flex flex-col justify-between pointer-events-none" onpointerdown="startDragNote(event, '${note.id}')">
                         <p class="text-xs sm:text-sm text-slate-700 whitespace-pre-wrap leading-relaxed pointer-events-auto">${escapeHtml(note.content)}</p>
                         <div class="mt-3 pt-2 border-t border-black/5 flex items-center justify-between text-[11px] text-slate-500 font-medium">
-                            <span class="truncate max-w-[220px]"><i class="fa-solid fa-user-pen mr-1"></i>${escapeHtml(note.author || '匿名')}</span>
+                            <span class="truncate max-w-[220px] flex items-center">${userAvatarHtml}${escapeHtml(note.userName || note.author || '匿名')}</span>
                             ${note.creatorId === window.myCreatorId ? '<span class="text-[9px] bg-indigo-600/10 text-indigo-700 px-1.5 py-0.5 rounded-md font-semibold">あなたの投稿</span>' : ''}
                         </div>
                     </div>
@@ -615,6 +810,105 @@
             if (!hasInitializedView && window.notesData.length > 0) {
                 fitAllNotes(false);
             }
+        }
+
+        // 編集者モードでの詳細ポップアップ関連
+        function openAdminDetailModalForNote(noteId) {
+            const note = window.notesData.find(n => n.id === noteId);
+            if (!note) return;
+
+            const container = document.getElementById('admin-detail-content');
+            
+            const createdAtStr = note.createdAt ? new Date(note.createdAt).toLocaleString('ja-JP') : '不明';
+            const updatedAtStr = note.updatedAt ? new Date(note.updatedAt).toLocaleString('ja-JP') : '更新なし';
+            
+            let historyHtml = '<p class="text-slate-400 text-xs italic">編集履歴はありません</p>';
+            if (note.history && note.history.length > 0) {
+                historyHtml = note.history.map((h, idx) => `
+                    <div class="bg-white p-3 rounded-2xl border border-slate-200 space-y-1">
+                        <div class="flex items-center justify-between text-[11px] text-slate-400">
+                            <span class="font-bold text-indigo-600">履歴 #${idx + 1}</span>
+                            <span>${new Date(h.timestamp).toLocaleString('ja-JP')}</span>
+                        </div>
+                        <p class="text-xs text-slate-700 whitespace-pre-wrap">${escapeHtml(h.content)}</p>
+                    </div>
+                `).join('');
+            }
+
+            container.innerHTML = `
+                <div class="space-y-4">
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200 flex items-center space-x-3">
+                        ${note.userPhoto ? `<img src="${note.userPhoto}" class="w-12 h-12 rounded-full object-cover border border-slate-200 shadow-sm">` : `<div class="w-12 h-12 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-lg">U</div>`}
+                        <div>
+                            <p class="text-xs text-slate-400">投稿ユーザー</p>
+                            <p class="font-bold text-slate-800 text-sm">${escapeHtml(note.userName || note.author || '匿名')} <span class="text-[10px] text-slate-400 font-normal">(${escapeHtml(note.userEmail || 'ID: ' + note.creatorId)})</span></p>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="bg-white p-3.5 rounded-2xl border border-slate-200">
+                            <p class="text-[11px] text-slate-400 font-semibold mb-0.5"><i class="fa-regular fa-clock mr-1"></i>投稿時間</p>
+                            <p class="text-xs font-bold text-slate-700">${createdAtStr}</p>
+                        </div>
+                        <div class="bg-white p-3.5 rounded-2xl border border-slate-200">
+                            <p class="text-[11px] text-slate-400 font-semibold mb-0.5"><i class="fa-solid fa-rotate mr-1"></i>最終更新時間</p>
+                            <p class="text-xs font-bold text-slate-700">${updatedAtStr}</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-white p-4 rounded-2xl border border-slate-200 space-y-2">
+                        <p class="text-xs font-bold text-slate-700">現在の付箋内容</p>
+                        <p class="text-xs text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-100 whitespace-pre-wrap">${escapeHtml(note.content)}</p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <p class="text-xs font-bold text-slate-700 px-1">編集前のコメント履歴</p>
+                        <div class="space-y-2">
+                            ${historyHtml}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            showModal('admin-detail-modal');
+        }
+
+        function closeAdminDetailModal() {
+            closeModalById('admin-detail-modal');
+        }
+
+        function renderAdminTabs() {
+            const listEl = document.getElementById('admin-sessions-list');
+            if (!listEl) return;
+
+            const sessions = window.loginSessions || [];
+            if (sessions.length === 0) {
+                listEl.innerHTML = `<p class="text-[11px] text-slate-400 text-center py-2">ログインセッション情報はありません</p>`;
+                return;
+            }
+
+            listEl.innerHTML = sessions.map(s => `
+                <div class="flex items-center justify-between p-2 rounded-xl bg-slate-50 border border-slate-200 text-xs">
+                    <div class="flex items-center space-x-2 truncate">
+                        ${s.photoURL ? `<img src="${s.photoURL}" class="w-6 h-6 rounded-full object-cover">` : `<div class="w-6 h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-[10px]">U</div>`}
+                        <div class="truncate">
+                            <span class="font-bold text-slate-800">${escapeHtml(s.displayName)}</span>
+                            <span class="text-slate-400 text-[10px] ml-1">(${escapeHtml(s.email || s.uid)})</span>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-2 shrink-0">
+                        ${s.isCurrent ? '<span class="px-2 py-0.5 bg-emerald-500 text-white text-[10px] font-bold rounded-full animate-pulse">今ログイン中</span>' : '<span class="px-2 py-0.5 bg-slate-200 text-slate-600 text-[10px] rounded-full">過去にログイン</span>'}
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function openLoginModal() {
+            showModal('login-modal');
+        }
+
+        function closeLoginModal() {
+            closeModalById('login-modal');
         }
 
         function openSearchModal() {
@@ -859,13 +1153,28 @@
                 else title = 'みんなの挑戦';
             }
 
+            const now = new Date().toISOString();
+            const currentUserName = window.currentUser ? window.currentUser.displayName : (name || '匿名');
+            const currentUserPhoto = window.currentUser ? window.currentUser.photoURL : '';
+            const currentUserEmail = window.currentUser ? window.currentUser.email : '';
+
             if (idInput) {
                 const existingNote = window.notesData.find(n => n.id === idInput);
                 if (existingNote && (existingNote.creatorId === window.myCreatorId || window.isAdminMode)) {
+                    // 変更前の内容を履歴に保存
+                    if (existingNote.content !== content) {
+                        if (!existingNote.history) existingNote.history = [];
+                        existingNote.history.push({
+                            content: existingNote.content,
+                            timestamp: existingNote.updatedAt || existingNote.createdAt || now
+                        });
+                    }
+
                     existingNote.title = title;
                     existingNote.content = content;
                     existingNote.author = author;
                     existingNote.color = document.querySelector('input[name="note-color"]:checked').value;
+                    existingNote.updatedAt = now;
                     saveNoteToDb(existingNote);
                 }
             } else {
@@ -881,7 +1190,13 @@
                     color: document.querySelector('input[name="note-color"]:checked').value,
                     x: Math.max(200, Math.min(4800, centerX)),
                     y: Math.max(200, Math.min(4800, centerY)),
-                    creatorId: window.myCreatorId
+                    creatorId: window.myCreatorId,
+                    userName: currentUserName,
+                    userPhoto: currentUserPhoto,
+                    userEmail: currentUserEmail,
+                    createdAt: now,
+                    updatedAt: null,
+                    history: []
                 };
                 window.notesData.push(newNote);
                 saveNoteToDb(newNote);
